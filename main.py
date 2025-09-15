@@ -1,5 +1,5 @@
 from blob.blob import storage
-from blob.routers.auth import auth_router
+from blob.routers.auth import authRouter
 from fastapi import FastAPI, UploadFile, File, APIRouter
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,11 +7,11 @@ from mimetypes import guess_type
 
 
 app = FastAPI()
-app.include_router(auth_router)
+app.include_router(authRouter)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

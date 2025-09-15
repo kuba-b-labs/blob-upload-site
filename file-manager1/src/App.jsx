@@ -1,64 +1,67 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useMsal, useIsAuthenticated } from "@azure/msal-react";
+import { EventType, InteractionStatus } from "@azure/msal-browser";
+import { loginRequest } from "./authConfig";
 
 export default function FileManager() {
   const [files, setFiles] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [dstContainer, setDstContainer] = useState("");
-
-  // --- AUTH ---
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [accessToken, setAccessToken] = useState(null);
   const [authStatus, setAuthStatus] = useState("Nie zalogowano");
+
+  const { instance, inProgress } = useMsal();
+  const isAuthenticated = useIsAuthenticated();
 
   const API = "http://localhost:8000";
 
-  // helper: fetch z Bearer
+  // 1) Bootstrap: jeśli są konta w cache, ustaw activeAccount
+  useEffect(() => {
+    const all = instance.getAllAccounts();
+    if (all.length > 0 && !instance.getActiveAccount()) {
+      instance.setActiveAccount(all[0]);
+      // console.log("[MSAL] Bootstrap setActiveAccount:", all[0]?.username);
+    }
+  }, [instance]);
+
+  // 2) Po LOGIN_SUCCESS (redirect wraca do SPA) ustaw activeAccount
+  useEffect(() => {
+    const cbId = instance.addEventCallback((event) => {
+      if (event.eventType === EventType.LOGIN_SUCCESS && event.payload?.account) {
+        instance.setActiveAccount(event.payload.account);
+        // console.log("[MSAL] LOGIN_SUCCESS setActiveAccount:", event.payload.account?.username);
+      }
+    });
+    return () => { if (cbId) instance.removeEventCallback(cbId); };
+  }, [instance]);
+
+  // Pobiera access token z MSAL (silent), rzuca błąd jeśli brak sesji
+  const getAccessToken = async () => {
+    const active = instance.getActiveAccount();
+    if (!active) throw new Error("Brak zalogowanego użytkownika");
+    const resp = await instance.acquireTokenSilent({ ...loginRequest, account: active });
+    return resp.accessToken;
+  };
+
+  // helper: fetch z Bearer z MSAL
   const authFetch = async (url, options = {}) => {
-    if (!accessToken) {
-      alert("Najpierw zaloguj się.");
-      throw new Error("Brak tokenu");
-    }
-    const headers = {
-      ...(options.headers || {}),
-      Authorization: `Bearer ${accessToken}`,
-    };
-    const res = await fetch(url, { ...options, headers });
-    if (res.status === 401) {
-      setAuthStatus("Sesja wygasła / 401");
-    }
-    return res;
-  };
-
-  const login = async () => {
     try {
-      // Typowy endpoint FastAPI: /auth/token przyjmuje form-data x-www-form-urlencoded
-      const body = new URLSearchParams({ username, password });
-      const res = await fetch(`${API}/auth/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-
-      if (!res.ok) {
-        const msg = await res.text();
-        setAuthStatus(`Błąd logowania: ${res.status}`);
-        alert(msg || "Błąd logowania");
-        return;
-      }
-
-      const data = await res.json();
-      if (!data.access_token) {
-        alert("Brak access_token w odpowiedzi backendu");
-        return;
-      }
-      setAccessToken(data.access_token);
-      setAuthStatus("Zalogowano ✅");
+      const token = await getAccessToken();
+      const headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${token}`,
+      };
+      const res = await fetch(url, { ...options, headers });
+      if (res.status === 401) setAuthStatus("Sesja wygasła / 401");
+      return res;
     } catch (e) {
-      console.error(e);
-      setAuthStatus("Błąd sieci");
+      alert("Najpierw zaloguj się przez Microsoft.");
+      throw e;
     }
   };
+
+  // Logowanie / wylogowanie
+  const login = () => instance.loginRedirect(loginRequest);
+  const logout = () => instance.logoutRedirect();
 
   // --- Operacje plikowe (z tokenem) ---
   const fetchFiles = async () => {
@@ -66,6 +69,7 @@ export default function FileManager() {
     const res = await authFetch(`${API}/listblobs/${dstContainer}`);
     const data = await res.json();
     setFiles(data);
+    setAuthStatus("Zalogowano ✅");
   };
 
   const uploadFile = async () => {
@@ -93,8 +97,6 @@ export default function FileManager() {
 
   const downloadFile = async (filename) => {
     if (!dstContainer) return alert("Podaj nazwę folderu!");
-
-    // Pobieramy przez fetch z nagłówkiem Authorization (window.open nie pozwala dodać nagłówków)
     const res = await authFetch(`${API}/download/${dstContainer}/${filename}`);
     if (!res.ok) {
       alert(`Błąd pobierania: ${res.status}`);
@@ -102,8 +104,6 @@ export default function FileManager() {
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-
-    // Tworzymy tymczasowe <a download>
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
@@ -113,33 +113,37 @@ export default function FileManager() {
     URL.revokeObjectURL(url);
   };
 
+  const activeUsername = instance.getActiveAccount()?.username;
+
+  // 3) Gdy MSAL jest w trakcie interakcji (redirect/iframe), wstrzymaj UI
+  if (inProgress !== InteractionStatus.None) {
+    return <div style={{ padding: 16 }}>Trwa uwierzytelnianie…</div>;
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
         <h1 style={styles.title}>📂 File Manager</h1>
 
-        {/* --- Login box --- */}
+        {/* --- Microsoft Login box --- */}
         <div style={styles.authBox}>
-          <div style={styles.authRow}>
-            <input
-              type="text"
-              placeholder="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              style={styles.input}
-            />
-            <input
-              type="password"
-              placeholder="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={styles.input}
-            />
-          </div>
-          <button onClick={login} style={styles.buttonBlue}>Login</button>
-          <div style={styles.authStatus}>
-            <b>Status:</b> {authStatus}
-          </div>
+          {!isAuthenticated ? (
+            <>
+              <button onClick={login} style={styles.buttonBlue}>
+                Zaloguj przez Microsoft
+              </button>
+              <div style={styles.authStatus}><b>Status:</b> {authStatus}</div>
+              <div style={styles.tip}>
+                Upewnij się, że Redirect URI w Entra = identyczny jak w authConfig (np. http://localhost:5173).
+              </div>
+            </>
+          ) : (
+            <>
+              <div><b>Zalogowano:</b> {activeUsername}</div>
+              <button onClick={logout} style={styles.buttonGray}>Wyloguj</button>
+              <div style={styles.authStatus}><b>Status:</b> {authStatus}</div>
+            </>
+          )}
         </div>
 
         {/* --- Reszta UI --- */}
@@ -207,16 +211,9 @@ const styles = {
     padding: "10px",
     background: "#fafafa",
   },
-  authRow: {
-    display: "flex",
-    gap: "8px",
-    marginBottom: "8px",
-  },
-  authStatus: {
-    fontSize: "12px",
-    color: "#374151",
-    marginTop: "6px",
-  },
+  authRow: { display: "flex", gap: "8px", marginBottom: "8px" },
+  authStatus: { fontSize: "12px", color: "#374151", marginTop: "6px" },
+  tip: { fontSize: "12px", color: "#6b7280", marginTop: "6px" },
   input: {
     padding: "8px",
     borderRadius: "6px",
