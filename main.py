@@ -1,12 +1,20 @@
 from blob.blob import storage
 from blob.routers.auth import authRouter
-from fastapi import FastAPI, UploadFile, File, APIRouter
+from fastapi import FastAPI, UploadFile, File, APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from mimetypes import guess_type
+from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
+from typing import Annotated
+from blob.routers.jwt1 import tokenValidation
 
+security = HTTPBearer()
 
-app = FastAPI()
+def authUser( credentials: HTTPAuthorizationCredentials = Depends(security) ):
+    tokenValidation(credentials.credentials)
+    return None
+
+app = FastAPI(dependencies = [Depends(authUser)] )
 app.include_router(authRouter)
 
 app.add_middleware(

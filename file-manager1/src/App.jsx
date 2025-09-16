@@ -69,7 +69,7 @@ export default function FileManager() {
     const res = await authFetch(`${API}/listblobs/${dstContainer}`);
     const data = await res.json();
     setFiles(data);
-    setAuthStatus("Zalogowano ✅");
+    setAuthStatus("Zalogowano do kontenera ✅");
   };
 
   const uploadFile = async () => {
@@ -134,7 +134,7 @@ export default function FileManager() {
               </button>
               <div style={styles.authStatus}><b>Status:</b> {authStatus}</div>
               <div style={styles.tip}>
-                Upewnij się, że Redirect URI w Entra = identyczny jak w authConfig (np. http://localhost:5173).
+                
               </div>
             </>
           ) : (
