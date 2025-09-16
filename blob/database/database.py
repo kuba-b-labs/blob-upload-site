@@ -5,12 +5,12 @@ from dotenv import load_dotenv
 from os import getenv
 
 load_dotenv()
-
+dbUrl = getenv("DB")
 class postgres(BaseModel):
     """SQL command execution"""
 
     async def __aenter__(self):
-        self.pool = await asyncpg.create_pool("postgresql://postgres:mysecretpassword@localhost:5432/postgres")
+        self.pool = await asyncpg.create_pool( dbUrl )
         return self
     async def __aexit__(self):
         self.pool.close()
